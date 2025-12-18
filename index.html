@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <base target="_top">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.25/jspdf.plugin.autotable.min.js"></script>
+    <style>
+        .column-chip { transition: all 0.2s; }
+        .column-chip:hover { background-color: #e2e8f0; }
+        .hidden-col { display: none !important; }
+    </style>
+</head>
+<body class="bg-gray-100 p-5">
+    <div class="max-w-6xl mx-auto bg-white p-6 rounded-lg shadow-lg">
+        <div class="flex justify-between items-center mb-6">
+            <h2 id="sheetName" class="text-xl font-bold text-gray-800">Secure Data Portal</h2>
+            <button onclick="loadData()" id="syncBtn" class="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 transition">
+                🔄 Sync Data
+            </button>
+        </div>
+       
+        <div id="filterSection" class="hidden space-y-4 mb-6">
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4 p-4 bg-blue-50 rounded-lg border border-blue-100">
+                <div>
+                    <label class="block text-xs font-bold uppercase text-gray-500 mb-1">Filter by Column</label>
+                    <select id="colSelect" class="w-full border p-2 rounded bg-white"></select>
+                </div>
+                <div>
+                    <label class="block text-xs font-bold uppercase text-gray-500 mb-1">Search Value (e.g. "C")</label>
+                    <input type="text" id="filterVal" placeholder="Type to filter..." class="w-full border p-2 rounded bg-white">
+                </div>
+                <div class="flex items-end gap-2">
+                    <button onclick="applyFilter()" class="bg-green-600 text-white px-4 py-2 rounded font-medium hover:bg-green-700 flex-grow">Apply Filter</button>
+                    <button onclick="resetAll()" class="bg-gray-500 text-white px-4 py-2 rounded font-medium hover:bg-gray-600">Reset</button>
+                </div>
+            </div>
+
+            <div class="p-4 bg-gray-50 rounded-lg border border-gray-200">
+                <label class="block text-xs font-bold uppercase text-gray-500 mb-2">Show/Hide Columns</label>
+                <div id="columnCheckboxes" class="flex flex-wrap gap-2 max-h-32 overflow-y-auto p-2 bg-white border rounded">
+                    </div>
+                <div class="mt-4 flex justify-end">
+                    <button onclick="downloadPDF()" class="bg-red-600 text-white px-6 py-2 rounded font-medium hover:bg-red-700">
+                        📄 Export Visible to PDF
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <div class="overflow-x-auto border rounded shadow-inner">
+            <table id="mainTable" class="w-full text-left border-collapse text-sm">
+                <thead id="thead" class="bg-gray-200 sticky top-0"></thead>
+                <tbody id="tbody" class="bg-white divide-y">
+                    <tr><td class="p-10 text-center text-gray-400" colspan="100">Click "Sync Data" to load...</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <script>
+        let fullData = [];
+        let visibleColumns = [];
+
+        window.onload = loadData;
+
+        function loadData() {
+            const btn = document.getElementById('syncBtn');
+            btn.innerText = "⌛ Syncing...";
+            btn.disabled = true;
+           
+            google.script.run.withSuccessHandler(res => {
+                if(typeof res === 'string') return alert(res);
+                document.getElementById('sheetName').innerText = "Source: " + res.name;
+                fullData = res.values;
+               
+                // Initialize all columns as visible
+                visibleColumns = fullData[0].map((_, i) => i);
+               
+                setupUI();
+                render(fullData);
+               
+                btn.innerText = "🔄 Sync Data";
+                btn.disabled = false;
+            }).getSheetData();
+        }
+
+        function setupUI() {
+            document.getElementById('filterSection').classList.remove('hidden');
+           
+            // Setup Filter Dropdown
+            const select = document.getElementById('colSelect');
+            select.innerHTML = fullData[0].map((_, i) => `<option value="${i}">Column ${i+1}</option>`).join('');
+
+            // Setup Column Checkboxes
+            const checkContainer = document.getElementById('columnCheckboxes');
+            checkContainer.innerHTML = fullData[0].map((_, i) => `
+                <label class="column-chip inline-flex items-center px-3 py-1 border rounded-full text-xs cursor-pointer bg-white">
+                    <input type="checkbox" checked onchange="toggleColumn(${i})" class="mr-2 h-3 w-3">
+                    Col ${i+1}
+                </label>
+            `).join('');
+        }
+
+        function toggleColumn(index) {
+            const cells = document.querySelectorAll(`.col-idx-${index}`);
+            cells.forEach(c => c.classList.toggle('hidden-col'));
+           
+            if (visibleColumns.includes(index)) {
+                visibleColumns = visibleColumns.filter(i => i !== index);
+            } else {
+                visibleColumns.push(index);
+                visibleColumns.sort((a, b) => a - b);
+            }
+        }
+
+        function render(rows) {
+            const thead = document.getElementById('thead');
+            const tbody = document.getElementById('tbody');
+           
+            // Header Row
+            thead.innerHTML = `<tr>${rows[0].map((_, i) => `
+                <th class="border-b p-3 font-bold text-gray-700 col-idx-${i} ${visibleColumns.includes(i) ? '' : 'hidden-col'}">
+                    Column ${i+1}
+                </th>`).join('')}</tr>`;
+           
+            // Data Rows
+            const dataRows = rows.slice(1);
+            tbody.innerHTML = dataRows.map(row =>
+                `<tr class="hover:bg-gray-50 transition">
+                    ${row.map((cell, i) => `
+                        <td class="border-b p-3 text-gray-600 col-idx-${i} ${visibleColumns.includes(i) ? '' : 'hidden-col'}">
+                            ${cell}
+                        </td>`).join('')}
+                </tr>`
+            ).join('');
+        }
+
+        function applyFilter() {
+            const idx = document.getElementById('colSelect').value;
+            const term = document.getElementById('filterVal').value.toLowerCase().trim();
+            const filtered = [
+                fullData[0],
+                ...fullData.slice(1).filter(r => String(r[idx]).toLowerCase().includes(term))
+            ];
+            render(filtered);
+        }
+
+        function resetAll() {
+            document.getElementById('filterVal').value = "";
+            loadData(); // Resyncs and resets visibility
+        }
+
+        function downloadPDF() {
+            const { jsPDF } = window.jspdf;
+            const doc = new jsPDF('l', 'mm', 'a4');
+           
+            // Get data currently in the HTML table (which honors the filter)
+            // But we must remove columns that are hidden
+            const table = document.getElementById('mainTable');
+           
+            doc.autoTable({
+                html: '#mainTable',
+                columns: visibleColumns, // Only export visible indices
+                startY: 20,
+                theme: 'grid',
+                styles: { fontSize: 7, overflow: 'linebreak' },
+                headStyles: { fillColor: [71, 85, 105] },
+                didParseCell: function(data) {
+                    // Safety check to ensure hidden columns are not parsed
+                    if (data.column.index !== undefined && !visibleColumns.includes(data.column.index)) {
+                        // This effectively skips hidden columns in modern autoTable versions
+                    }
+                }
+            });
+           
+            doc.save('Filtered_Data.pdf');
+        }
+    </script>
+</body>
+</html>
