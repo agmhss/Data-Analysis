@@ -17,7 +17,7 @@
             <div>
                 <label class="block text-sm font-medium text-gray-700">Google Sheet ID</label>
                 <input type="text" id="sheetId" placeholder="Enter Sheet ID..." class="mt-1 block w-full border border-gray-300 rounded-md p-2 shadow-sm focus:ring-blue-500 focus:border-blue-500">
-                <p class="text-xs text-gray-500 mt-1">Ensure the sheet is "Published to Web" (File → Share → Publish to web → Entire Document → CSV).</p>
+                <p class="text-xs text-gray-500 mt-1">Ensure the sheet is "Published to Web" as CSV.</p>
             </div>
             <div class="flex items-end">
                 <button onclick="fetchData()" class="bg-blue-600 text-white px-6 py-2 rounded hover:bg-blue-700 transition">Fetch Data</button>
@@ -89,7 +89,7 @@
             }
         }
 
-        // Robust CSV parser that handles quoted fields, commas inside quotes, and newlines inside quotes
+        // Robust CSV parser
         function parseCSV(csvText) {
             const rows = [];
             let currentRow = [];
@@ -103,7 +103,7 @@
                 if (char === '"') {
                     if (inQuotes && nextChar === '"') {
                         currentField += '"';
-                        i++; // skip escaped quote
+                        i++;
                     } else {
                         inQuotes = !inQuotes;
                     }
@@ -111,7 +111,7 @@
                     currentRow.push(currentField.trim());
                     currentField = '';
                 } else if ((char === '\r' || char === '\n') && !inQuotes) {
-                    if (char === '\r' && nextChar === '\n') i++; // handle \r\n
+                    if (char === '\r' && nextChar === '\n') i++;
                     currentRow.push(currentField.trim());
                     rows.push(currentRow);
                     currentRow = [];
@@ -120,7 +120,6 @@
                     currentField += char;
                 }
             }
-            // Push the last field and row
             if (currentField || currentRow.length) {
                 currentRow.push(currentField.trim());
                 if (currentRow.length) rows.push(currentRow);
@@ -140,7 +139,6 @@
             rawData = rows.slice(1);
             displayedData = [...rawData];
 
-            // Default: show all columns
             visibleColumns = new Set(headers.keys());
 
             initControls();
@@ -151,7 +149,7 @@
         function initControls() {
             createColumnCheckboxes();
             document.getElementById('filterRows').innerHTML = '';
-            addFilterRow(); // one default filter row
+            addFilterRow();
         }
 
         function createColumnCheckboxes() {
@@ -186,7 +184,7 @@
 
         function addFilterRow() {
             const container = document.getElementById('filterRows');
-            const rowId = Date.now(); // unique ID
+            const rowId = Date.now();
 
             const filterRow = document.createElement('div');
             filterRow.className = 'grid grid-cols-1 md:grid-cols-3 gap-2 items-end p-3 bg-gray-50 rounded-lg border';
@@ -217,7 +215,6 @@
         }
 
         function applyFilters() {
-            // Collect filters: array of {col: index, val: string}
             const filters = [];
             document.querySelectorAll('[data-row]').forEach(el => {
                 const rowId = el.dataset.row;
@@ -226,7 +223,6 @@
 
                 if (!isCol && !isVal) return;
 
-                // Find or create filter object for this row
                 let filter = filters.find(f => f.rowId === rowId);
                 if (!filter) {
                     filter = { rowId };
@@ -237,10 +233,9 @@
                 if (isVal) filter.val = el.value.trim();
             });
 
-            // Apply AND logic
             displayedData = rawData.filter(row => {
                 return filters.every(f => {
-                    if (!f.val) return true; // empty filter → always pass
+                    if (!f.val) return true;
                     const cellValue = (row[f.col] || '').toString().toLowerCase();
                     return cellValue.includes(f.val.toLowerCase());
                 });
@@ -264,13 +259,23 @@
 
             const visibleHeaders = headers.filter((_, i) => visibleColumns.has(i));
 
-            head.innerHTML = visibleHeaders.length
-                ? `<tr>${visibleHeaders.map(h => `<th class="px-4 py-2 text-left font-semibold border whitespace-nowrap">${escapeHtml(h)}</th>`).join('')}</tr>`
-                : '<tr><th class="px-4 py-2 text-left font-semibold border">No columns selected</th></tr>';
+            // Always show "Sl No" as first column
+            const tableHeaders = ['Sl No', ...visibleHeaders];
 
-            body.innerHTML = dataRows.map(row => {
-                const cells = headers.map((_, i) => visibleColumns.has(i) ? `<td class="px-4 py-2 border">${escapeHtml(row[i] || '')}</td>` : '').filter(Boolean).join('');
-                return cells ? `<tr>${cells}</tr>` : '';
+            head.innerHTML = `<tr>${tableHeaders.map(h => 
+                `<th class="px-4 py-2 text-left font-semibold border whitespace-nowrap">${escapeHtml(h)}</th>`
+            ).join('')}</tr>`;
+
+            body.innerHTML = dataRows.map((row, index) => {
+                const slNo = index + 1;
+                const cells = headers.map((_, i) => 
+                    visibleColumns.has(i) ? `<td class="px-4 py-2 border">${escapeHtml(row[i] || '')}</td>` : ''
+                ).filter(Boolean).join('');
+
+                return `<tr>
+                    <td class="px-4 py-2 border text-center font-medium">${slNo}</td>
+                    ${cells}
+                </tr>`;
             }).join('');
         }
 
@@ -282,7 +287,7 @@
 
         function escapeHtml(text) {
             const div = document.createElement('div');
-            div.textContent = text;
+            div.textContent = text || '';
             return div.innerHTML;
         }
 
@@ -291,13 +296,19 @@
             const doc = new jsPDF('l', 'mm', 'a4');
 
             const visibleHeaders = headers.filter((_, i) => visibleColumns.has(i));
-            const tableData = displayedData.map(row =>
-                headers.map((_, i) => visibleColumns.has(i) ? (row[i] || '') : '').filter(Boolean)
-            );
+            const pdfHeaders = ['Sl No', ...visibleHeaders];
+
+            const pdfData = displayedData.map((row, index) => {
+                const slNo = index + 1;
+                const rowData = headers.map((_, i) => 
+                    visibleColumns.has(i) ? (row[i] || '') : ''
+                ).filter(Boolean);
+                return [slNo, ...rowData];
+            });
 
             doc.autoTable({
-                head: [visibleHeaders],
-                body: tableData,
+                head: [pdfHeaders],
+                body: pdfData,
                 styles: { fontSize: 8, cellPadding: 3 },
                 headStyles: { fillColor: [100, 149, 237] },
                 margin: { top: 20 },
