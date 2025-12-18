@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Sheet Data Retriever</title>
+    <title>Advanced Sheet Data Retriever</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.25/jspdf.plugin.autotable.min.js"></script>
@@ -11,7 +11,7 @@
 <body class="bg-gray-50 p-8">
 
     <div class="max-w-6xl mx-auto bg-white p-6 rounded-lg shadow-md">
-        <h1 class="text-2xl font-bold mb-6 text-gray-800">Google Sheet Data Retriever</h1>
+        <h1 class="text-2xl font-bold mb-6 text-gray-800">Advanced Google Sheet Data Retriever</h1>
         
         <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
             <div>
@@ -26,20 +26,31 @@
 
         <hr class="my-6">
 
-        <div id="controls" class="hidden space-y-4">
-            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <div>
-                    <label class="block text-sm font-medium text-gray-700">Filter Column (e.g., Column 1)</label>
-                    <select id="filterColumn" class="mt-1 block w-full border border-gray-300 rounded-md p-2"></select>
+        <div id="controls" class="hidden space-y-6">
+            <!-- Column Selection -->
+            <div>
+                <div class="flex justify-between items-center mb-3">
+                    <h3 class="text-lg font-semibold text-gray-800">Column Selection</h3>
+                    <div class="space-x-2">
+                        <button onclick="selectAllColumns()" class="bg-green-600 text-white px-3 py-1 text-sm rounded hover:bg-green-700">Select All</button>
+                        <button onclick="deselectAllColumns()" class="bg-gray-600 text-white px-3 py-1 text-sm rounded hover:bg-gray-700">Deselect All</button>
+                    </div>
                 </div>
-                <div>
-                    <label class="block text-sm font-medium text-gray-700">Filter Value (e.g., "C")</label>
-                    <input type="text" id="filterValue" placeholder="Type to filter..." class="mt-1 block w-full border border-gray-300 rounded-md p-2">
-                </div>
-                <div class="flex items-end space-x-2">
-                    <button onclick="applyFilters()" class="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700">Apply Filter</button>
-                    <button onclick="downloadPDF()" class="bg-red-600 text-white px-4 py-2 rounded hover:bg-red-700">Download PDF</button>
-                </div>
+                <div id="columnCheckboxes" class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2 max-h-40 overflow-y-auto p-2 border rounded-md bg-gray-50"></div>
+            </div>
+
+            <!-- Multi-Column Filters -->
+            <div>
+                <h3 class="text-lg font-semibold text-gray-800 mb-3">Filters (AND logic)</h3>
+                <div id="filterRows" class="space-y-2"></div>
+                <button onclick="addFilterRow()" class="mt-2 bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 text-sm">+ Add Filter</button>
+            </div>
+
+            <!-- Action Buttons -->
+            <div class="flex flex-wrap gap-2 pt-2">
+                <button onclick="applyFilters()" class="bg-green-600 text-white px-6 py-2 rounded hover:bg-green-700 font-medium">Apply Filters</button>
+                <button onclick="clearAllFilters()" class="bg-gray-600 text-white px-6 py-2 rounded hover:bg-gray-700 font-medium">Clear All</button>
+                <button onclick="downloadPDF()" class="bg-red-600 text-white px-6 py-2 rounded hover:bg-red-700 font-medium">Download PDF</button>
             </div>
         </div>
 
@@ -49,17 +60,23 @@
                 <tbody class="divide-y divide-gray-200" id="tableBody"></tbody>
             </table>
         </div>
+
+        <div id="stats" class="mt-4 text-sm text-gray-600 hidden">
+            Showing <span id="rowCount">0</span> of <span id="totalCount">0</span> rows
+        </div>
     </div>
 
     <script>
         let rawData = [];
         let headers = [];
+        let displayedData = [];
+        let visibleColumns = new Set();
+        let filterRows = [];
 
         async function fetchData() {
             const id = document.getElementById('sheetId').value.trim();
             if (!id) return alert("Please enter a Sheet ID");
 
-            // Fetching CSV format from published sheet
             const url = `https://docs.google.com/spreadsheets/d/${id}/export?format=csv`;
 
             try {
@@ -73,49 +90,202 @@
         }
 
         function processData(csvText) {
-            const rows = csvText.split('\n').map(row => row.split(','));
-            // Standardizing headers as Column 1, Column 2...
-            headers = rows[0].map((_, i) => `Column ${i + 1}`);
-            rawData = rows.slice(1); // Actual data rows
+            const rows = csvText.split('
+')
+                .filter(row => row.trim())
+                .map(row => parseCSVRow(row))
+                .filter(row => row.length > 0);
+
+            if (rows.length === 0) {
+                alert("No data found in the sheet.");
+                return;
+            }
+
+            headers = rows[0].map(h => h.trim() || `Column ${headers.length + 1}`);
+            rawData = rows.slice(1);
+            displayedData = [...rawData];
             
-            populateFilterOptions();
-            renderTable(rawData);
+            // Show all columns by default
+            visibleColumns = new Set(headers.keys());
+            
+            filterRows = [];
+            initControls();
+            renderTable(displayedData);
         }
 
-        function populateFilterOptions() {
-            const select = document.getElementById('filterColumn');
-            select.innerHTML = headers.map((h, i) => `<option value="${i}">${h}</option>`).join('');
+        function parseCSVRow(row) {
+            const result = [];
+            let current = '';
+            let inQuotes = false;
+            
+            for (let i = 0; i < row.length; i++) {
+                const char = row[i];
+                
+                if (char === '"') {
+                    inQuotes = !inQuotes;
+                } else if (char === ',' && !inQuotes) {
+                    result.push(current);
+                    current = '';
+                } else {
+                    current += char;
+                }
+            }
+            result.push(current);
+            return result.map(cell => cell.trim());
+        }
+
+        function initControls() {
+            createColumnCheckboxes();
+            addFilterRow(); // Add one filter row by default
+        }
+
+        function createColumnCheckboxes() {
+            const container = document.getElementById('columnCheckboxes');
+            container.innerHTML = headers.map((header, i) => `
+                <label class="flex items-center p-2 bg-white border rounded cursor-pointer hover:bg-gray-50">
+                    <input type="checkbox" value="${i}" checked onchange="updateVisibleColumns()" class="mr-2 rounded">
+                    <span class="text-sm truncate" title="${escapeHtml(header)}">${escapeHtml(header)}</span>
+                </label>
+            `).join('');
+        }
+
+        function updateVisibleColumns() {
+            visibleColumns.clear();
+            document.querySelectorAll('#columnCheckboxes input:checked').forEach(cb => {
+                visibleColumns.add(parseInt(cb.value));
+            });
+            renderTable(displayedData);
+        }
+
+        function selectAllColumns() {
+            document.querySelectorAll('#columnCheckboxes input[type="checkbox"]').forEach(cb => {
+                cb.checked = true;
+            });
+            visibleColumns = new Set(headers.keys());
+            renderTable(displayedData);
+        }
+
+        function deselectAllColumns() {
+            document.querySelectorAll('#columnCheckboxes input[type="checkbox"]').forEach(cb => {
+                cb.checked = false;
+            });
+            visibleColumns.clear();
+            renderTable([]);
+        }
+
+        function addFilterRow() {
+            const container = document.getElementById('filterRows');
+            const rowId = filterRows.length;
+            filterRows.push({ id: rowId });
+            
+            const filterRow = document.createElement('div');
+            filterRow.className = 'grid grid-cols-1 md:grid-cols-3 gap-2 items-end p-3 bg-gray-50 rounded-lg border';
+            filterRow.id = `filter-row-${rowId}`;
+            filterRow.innerHTML = `
+                <div>
+                    <label class="block text-xs font-medium text-gray-700 mb-1">Column</label>
+                    <select class="filter-col block w-full border border-gray-300 rounded-md p-2 text-sm" data-row="${rowId}">
+                        ${headers.map((h, i) => `<option value="${i}">${escapeHtml(h)}</option>`).join('')}
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-xs font-medium text-gray-700 mb-1">Value (contains)</label>
+                    <input type="text" class="filter-val block w-full border border-gray-300 rounded-md p-2 text-sm" data-row="${rowId}" placeholder="Enter filter text...">
+                </div>
+                <div class="flex space-x-1">
+                    <button onclick="removeFilterRow(${rowId})" class="bg-red-500 text-white px-3 py-1 rounded text-sm hover:bg-red-600 flex items-center">
+                        <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m7-10V4a1 1 0 00-1-1h-4M9 1v1a1 1 0 001 1h4a1 1 0 001-1V1M9 1H5M19 1h4"></path></svg>
+                        Remove
+                    </button>
+                </div>
+            `;
+            container.appendChild(filterRow);
+        }
+
+        function removeFilterRow(rowId) {
+            document.getElementById(`filter-row-${rowId}`).remove();
+            filterRows = filterRows.filter(f => f.id !== rowId);
+        }
+
+        function applyFilters() {
+            const filters = Array.from(document.querySelectorAll('.filter-col, .filter-val')).reduce((acc, el) => {
+                const rowId = parseInt(el.dataset.row);
+                if (!acc[rowId]) acc[rowId] = {};
+                acc[rowId][el.classList.contains('filter-col') ? 'col' : 'val'] = el.value;
+                return acc;
+            }, {});
+
+            displayedData = rawData.filter(row => {
+                return Object.values(filters).every(filter => {
+                    if (!filter.val.trim()) return true;
+                    const cellValue = (row[filter.col] || '').toString().toLowerCase();
+                    return cellValue.includes(filter.val.toLowerCase());
+                });
+            });
+
+            renderTable(displayedData);
+            updateStats();
+        }
+
+        function clearAllFilters() {
+            document.querySelectorAll('.filter-val').forEach(input => input.value = '');
+            filterRows = [];
+            document.getElementById('filterRows').innerHTML = '';
+            addFilterRow();
+            displayedData = [...rawData];
+            renderTable(displayedData);
+            updateStats();
         }
 
         function renderTable(dataRows) {
             const head = document.getElementById('tableHead');
             const body = document.getElementById('tableBody');
 
-            head.innerHTML = `<tr>${headers.map(h => `<th class="px-4 py-2 text-left font-semibold border">${h}</th>`).join('')}</tr>`;
+            const visibleHeaders = headers.map((h, i) => visibleColumns.has(i) ? h : null).filter(Boolean);
+            head.innerHTML = `<tr>${
+                visibleHeaders.map(h => `<th class="px-4 py-2 text-left font-semibold border whitespace-nowrap">${escapeHtml(h)}</th>`).join('')
+            }</tr>`;
             
             body.innerHTML = dataRows.map(row => 
-                `<tr>${row.map(cell => `<td class="px-4 py-2 border">${cell}</td>`).join('')}</tr>`
+                `<tr>${
+                    headers.map((_, i) => visibleColumns.has(i) ? `<td class="px-4 py-2 border">${escapeHtml(row[i] || '')}</td>` : '').filter(Boolean).join('')
+                }</tr>`
             ).join('');
         }
 
-        function applyFilters() {
-            const colIdx = document.getElementById('filterColumn').value;
-            const val = document.getElementById('filterValue').value.toLowerCase().trim();
+        function updateStats() {
+            const stats = document.getElementById('stats');
+            document.getElementById('rowCount').textContent = displayedData.length;
+            document.getElementById('totalCount').textContent = rawData.length;
+            stats.classList.remove('hidden');
+        }
 
-            const filtered = rawData.filter(row => {
-                return row[colIdx] && row[colIdx].toLowerCase().includes(val);
-            });
-
-            renderTable(filtered);
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
         }
 
         function downloadPDF() {
             const { jsPDF } = window.jspdf;
-            const doc = new jsPDF('l', 'mm', 'a4'); // Landscape for many columns
+            const doc = new jsPDF('l', 'mm', 'a4');
+            
+            const visibleHeaders = headers.map((h, i) => visibleColumns.has(i) ? h : null).filter(Boolean);
+            const tableData = displayedData.map(row => 
+                headers.map((_, i) => visibleColumns.has(i) ? row[i] || '' : '').filter(Boolean)
+            );
 
-            const table = document.getElementById('dataTable');
-            doc.autoTable({ html: '#dataTable' });
-            doc.save('sheet_data.pdf');
+            doc.autoTable({
+                head: [visibleHeaders],
+                body: tableData,
+                styles: { overflow: 'linebreak', cellPadding: 2, fontSize: 8 },
+                headStyles: { fillColor: [100, 149, 237] },
+                margin: { top: 20 },
+                didDrawPage: function(data) {
+                    doc.text(`Sheet Data - ${displayedData.length} rows`, 14, 20);
+                }
+            });
+            doc.save(`sheet_data_${new Date().toISOString().slice(0,10)}.pdf`);
         }
     </script>
 </body>
